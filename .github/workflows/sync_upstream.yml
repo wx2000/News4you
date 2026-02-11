@@ -17,89 +17,85 @@ jobs:
   sync:
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # 授予向仓库写入的权限
+      contents: write
 
     steps:
-      # 1. 检出您的项目代码
       - name: Checkout your repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0  # 获取完整历史，便于合并
+          fetch-depth: 0
 
-      # 2. 配置 Git 用户（用于后续提交）
       - name: Setup Git
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      # 3. 添加上游仓库地址（请确保地址正确）
-      - name: Add upstream remote
+      - name: Add upstream remote and fetch
         run: |
-          # 请将下面的URL替换为您的原始模板仓库地址
-          git remote add upstream https://github.com/sansan0/TrendRadar.git || true
+          # 1. 添加正确的上游仓库URL
+          git remote add upstream https://github.com/sansan0/TrendRadar.git
+          # 2. 获取上游所有分支和标签
           git fetch upstream
 
-      # 4. 核心：合并上游更新，并按照您的规则处理冲突
-      - name: Merge upstream with backup strategy
-        id: merge
+      - name: Determine default branch and merge
+        id: sync
         run: |
-          # 获取当前分支名（main 或 master）
-          CURRENT_BRANCH=$(git branch --show-current)
-          echo "当前分支: $CURRENT_BRANCH"
+          # 获取本地默认分支名 (可能是 main 或 master)
+          LOCAL_DEFAULT_BRANCH=$(git branch --show-current)
+          echo "本地默认分支: $LOCAL_DEFAULT_BRANCH"
 
-          # 尝试合并，但遇到冲突时暂停，不自动提交
-          echo "正在尝试合并上游更新..."
-          if git merge upstream/$CURRENT_BRANCH --no-commit; then
-            echo "状态：无冲突，可以自动合并。"
+          # 获取上游仓库的默认分支名（通常为 main 或 master）
+          # 这里我们假设上游也是 main，如果上游是 master，请将下一行改为 UPSTREAM_DEFAULT_BRANCH="master"
+          UPSTREAM_DEFAULT_BRANCH="master"
+          echo "上游默认分支: $UPSTREAM_DEFAULT_BRANCH"
+
+          # 尝试合并上游的默认分支到本地的默认分支
+          echo "正在执行: git merge upstream/$UPSTREAM_DEFAULT_BRANCH --no-commit"
+          if git merge upstream/$UPSTREAM_DEFAULT_BRANCH --no-commit; then
+            echo "状态：自动合并成功，无冲突。"
             echo "merged=clean" >> $GITHUB_OUTPUT
           else
-            echo "状态：检测到冲突，开始执行备份和覆盖策略。"
-
-            # 找出所有处于冲突状态的文件
+            echo "状态：检测到冲突，执行备份覆盖策略。"
             CONFLICTED_FILES=$(git diff --name-only --diff-filter=U)
-            echo "冲突文件列表："
-            echo "$CONFLICTED_FILES"
-
+            echo "冲突文件: $CONFLICTED_FILES"
             for file in $CONFLICTED_FILES; do
-              echo "处理文件: $file"
-              # 1. 备份本地版本
+              echo "处理: $file"
               if [ -f "$file" ]; then
-                backup_file="${file}.backup"
-                echo "  备份本地版本 -> $backup_file"
-                cp "$file" "$backup_file"
+                cp "$file" "${file}.backup"
+                echo "  已备份为: ${file}.backup"
               fi
-              # 2. 强制采用上游版本（检出“他们的”版本）
-              echo "  采用上游版本覆盖本地文件"
               git checkout --theirs -- "$file"
-              # 3. 将解决方案标记为已解决
               git add "$file"
             done
-
-            echo "所有冲突已按规则（上游优先+本地备份）解决。"
+            echo "状态：所有冲突已解决（采用上游版本）。"
             echo "merged=with_backup" >> $GITHUB_OUTPUT
           fi
 
-      # 5. 提交合并结果
       - name: Commit the merge
-        if: steps.merge.outputs.merged != ''
+        if: steps.sync.outputs.merged != ''
         run: |
-          CURRENT_BRANCH=$(git branch --show-current)
-          commit_msg="chore: sync updates from upstream"
-          
-          if [ "${{ steps.merge.outputs.merged }}" = "with_backup" ]; then
-            commit_msg="$commit_msg (conflicts resolved using upstream version, local files backed up)"
+          # 仅在确实有内容可提交时才执行
+          if ! git diff --cached --quiet; then
+            CURRENT_BRANCH=$(git branch --show-current)
+            COMMIT_MSG="chore: sync updates from upstream"
+            if [ "${{ steps.sync.outputs.merged }}" = "with_backup" ]; then
+              COMMIT_MSG="$COMMIT_MSG (conflicts resolved, backup created)"
+            fi
+            git commit -m "$COMMIT_MSG"
+            echo "合并提交已完成。"
           else
-            commit_msg="$commit_msg"
+            echo "无变更需要提交，跳过提交步骤。"
           fi
-          
-          git commit -m "$commit_msg"
-          echo "已创建提交。"
 
-      # 6. 推送更新到您的仓库
       - name: Push changes
-        if: steps.merge.outputs.merged != ''
+        if: steps.sync.outputs.merged != ''
         run: |
-          CURRENT_BRANCH=$(git branch --show-current)
-          git push origin $CURRENT_BRANCH
-          echo "更新已成功推送到 origin/$CURRENT_BRANCH"
+          # 只有在提交后，本地分支领先于远程时，才需要推送
+          if git status | grep -q 'ahead of'; then
+            CURRENT_BRANCH=$(git branch --show-current)
+            git push origin $CURRENT_BRANCH
+            echo "更新已推送至 origin/$CURRENT_BRANCH"
+          else
+            echo "本地分支与远程分支同步，无需推送。"
+          fi
