@@ -1,0 +1,56 @@
+name: Sync from Upstream Template
+
+on:
+  # 定时触发：每周一上午8点自动运行（北京时间）
+  schedule:
+    - cron: '0 0 * * 1'
+  
+  # 手动触发：在 GitHub Actions 页面可以手动运行
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: '手动同步原因'
+        required: false
+        default: '手动触发同步'
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. 检出你的仓库代码
+      - name: Checkout your repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0  # 获取完整历史记录
+      
+      # 2. 设置 Git 用户信息（用于提交记录）
+      - name: Setup Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+      
+      # 3. 添加上游仓库地址
+      - name: Add upstream remote
+        run: |
+          # 替换下面的 URL 为你的模板仓库地址
+          git remote add upstream https://github.com/sansan0/TrendRadar.git
+          git fetch upstream
+      
+      # 4. 尝试合并上游更新
+      - name: Merge upstream changes
+        run: |
+          # 尝试合并，如果冲突则跳过
+          git merge upstream/main --allow-unrelated-histories -m "chore: sync updates from upstream [skip ci]" || echo "合并失败，可能存在冲突"
+        continue-on-error: true
+      
+      # 5. 推送更新到你的仓库
+      - name: Push changes
+        run: |
+          # 检查是否有新内容需要推送
+          if git diff --quiet HEAD origin/main; then
+            echo "没有新内容需要推送"
+          else
+            git push origin main
+            echo "已推送更新"
+          fi
