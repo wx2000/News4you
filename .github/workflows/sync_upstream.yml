@@ -52,7 +52,7 @@ jobs:
 
           # 尝试合并上游的默认分支到本地的默认分支
           echo "正在执行: git merge upstream/$UPSTREAM_DEFAULT_BRANCH --no-commit"
-          if git merge upstream/$UPSTREAM_DEFAULT_BRANCH --no-commit; then
+          if git merge upstream/$UPSTREAM_DEFAULT_BRANCH --allow-unrelated-histories --no-commit; then
             echo "状态：自动合并成功，无冲突。"
             echo "merged=clean" >> $GITHUB_OUTPUT
           else
